@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { COLOR_OPTIONS, fallbackRecommendation, type ImageSummary, type Recommendation } from '../shared/analyze'
-import { calculateGrid, loadImage, summarizePixels, type RGB } from './lib/image'
-import { renderBeads } from './lib/render'
-import type { BeadSwatch } from './lib/pixelPipeline'
+import { calculateGrid, loadImage, summarizePixels } from './lib/image'
+import { renderBeads, renderPatternSheet } from './lib/render'
+import type { BeadSwatch, ProcessedPixel } from './lib/pixelPipeline'
 
 type Status = 'empty' | 'ready' | 'analyzing' | 'done' | 'error'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
@@ -21,10 +21,11 @@ function App() {
   const [colorCount, setColorCount] = useState(32)
   const [showGrid, setShowGrid] = useState(true)
   const [showCodes, setShowCodes] = useState(false)
+  const [isolateSubject, setIsolateSubject] = useState(false)
   const [zoom, setZoom] = useState(5)
   const [status, setStatus] = useState<Status>('empty')
   const [message, setMessage] = useState('')
-  const [pixels, setPixels] = useState<RGB[]>([])
+  const [pixels, setPixels] = useState<ProcessedPixel[]>([])
   const [swatches, setSwatches] = useState<BeadSwatch[]>([])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -45,6 +46,7 @@ function App() {
       setRecommendation(null)
       setGridLongEdge(72)
       setColorCount(32)
+      setIsolateSubject(false)
       setStatus('ready')
       setMessage('照片只在你的浏览器中处理，原图不会发送给 AI。')
       loaded.bitmap.close()
@@ -58,13 +60,13 @@ function App() {
     workerRef.current?.terminate()
     const worker = new Worker(new URL('./lib/imageWorker.ts', import.meta.url), { type: 'module' })
     workerRef.current = worker
-    worker.onmessage = (event: MessageEvent<{ pixels: RGB[]; swatches: BeadSwatch[] }>) => {
+    worker.onmessage = (event: MessageEvent<{ pixels: ProcessedPixel[]; swatches: BeadSwatch[] }>) => {
       setPixels(event.data.pixels)
       setSwatches(event.data.swatches)
     }
-    worker.postMessage({ image: imageData, gridWidth: grid.width, gridHeight: grid.height, colorCount, contrast: recommendation?.contrast || 1.04, saturation: recommendation?.saturation || 1 })
+    worker.postMessage({ image: imageData, gridWidth: grid.width, gridHeight: grid.height, colorCount, contrast: recommendation?.contrast || 1.04, saturation: recommendation?.saturation || 1, isolateSubject })
     return () => worker.terminate()
-  }, [imageData, grid.width, grid.height, colorCount, recommendation?.contrast, recommendation?.saturation])
+  }, [imageData, grid.width, grid.height, colorCount, recommendation?.contrast, recommendation?.saturation, isolateSubject])
 
   useEffect(() => {
     if (canvasRef.current && pixels.length) renderBeads(canvasRef.current, pixels, grid.width, grid.height, showGrid, zoom, swatches, showCodes)
@@ -97,12 +99,14 @@ function App() {
   function download() {
     if (!pixels.length) return
     const output = document.createElement('canvas')
-    renderBeads(output, pixels, grid.width, grid.height, showGrid, showCodes ? 18 : 12, swatches, showCodes)
+    renderPatternSheet(output, pixels, grid.width, grid.height, swatches, `${file?.name.replace(/\.[^.]+$/, '') || '照片'} · 拼豆制作图`)
     const link = document.createElement('a')
-    link.download = `${file?.name.replace(/\.[^.]+$/, '') || '照片'}-拼豆图.png`
+    link.download = `${file?.name.replace(/\.[^.]+$/, '') || '照片'}-高清拼豆图纸.png`
     link.href = output.toDataURL('image/png')
     link.click()
   }
+
+  const beadCount = pixels.filter(Boolean).length
 
   function downloadList() {
     if (!swatches.length) return
@@ -156,7 +160,7 @@ function App() {
           </div>
           <div className="sheet-stats">
             <article><small>图纸尺寸</small><strong>{grid.width} × {grid.height}</strong><span>格</span></article>
-            <article><small>拼豆总数</small><strong>{pixels.length.toLocaleString()}</strong><span>颗</span></article>
+            <article><small>拼豆总数</small><strong>{beadCount.toLocaleString()}</strong><span>颗</span></article>
             <article><small>实际颜色</small><strong>{swatches.length}</strong><span>种</span></article>
             <article><small>建议底板</small><strong>{Math.ceil(grid.width / 29)} × {Math.ceil(grid.height / 29)}</strong><span>块 29 格板</span></article>
           </div>
@@ -177,10 +181,11 @@ function App() {
         <div className="control-block"><label><span>颜色数量</span><b>{swatches.length || colorCount} 色</b></label><div className="color-options">{COLOR_OPTIONS.map((value) => <button key={value} className={value === colorCount ? 'active' : ''} onClick={() => setColorCount(value)}>{value}</button>)}</div><p>这是颜色上限；映射到 MARD 色卡后，实际使用色号可能更少。</p></div>
         <div className="toggle-row"><div><Icon name="▦" /><span>显示网格线<small>方便按格制作</small></span></div><button role="switch" aria-checked={showGrid} className={`switch ${showGrid ? 'on' : ''}`} onClick={() => setShowGrid((value) => !value)}><span /></button></div>
         <div className="toggle-row"><div><Icon name="A1" /><span>格内显示色号<small>预览调到 10× 时显示最清楚</small></span></div><button role="switch" aria-checked={showCodes} className={`switch ${showCodes ? 'on' : ''}`} onClick={() => { setShowCodes((value) => !value); if (!showCodes) setZoom(10) }}><span /></button></div>
+        <div className={`subject-control ${isolateSubject ? 'is-active' : ''}`}><div className="subject-copy"><Icon name="◎" /><span>只保留主体<small>本地识别画面主体，背景格自动留空</small></span><button role="switch" aria-label="只保留主体" aria-checked={isolateSubject} className={`switch ${isolateSubject ? 'on' : ''}`} onClick={() => setIsolateSubject((value) => !value)}><span /></button></div><p>{isolateSubject ? `已留空 ${(pixels.length - beadCount).toLocaleString()} 格，下载图纸中的空白格无需摆豆。` : '适合人物、宠物和物品照片；复杂背景可能需要关闭。'}</p></div>
         <div className="control-block"><label htmlFor="zoom"><span>预览缩放</span><b>{zoom}×</b></label><input id="zoom" type="range" min="2" max="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></div>
-        <div className="sidebar-summary"><span><Icon name="▦" /> {grid.width} × {grid.height} 格</span><span><Icon name="●" /> {swatches.length} 色</span><span><Icon name="∑" /> {pixels.length.toLocaleString()} 颗</span></div>
+        <div className="sidebar-summary"><span><Icon name="▦" /> {grid.width} × {grid.height} 格</span><span><Icon name="●" /> {swatches.length} 色</span><span><Icon name="∑" /> {beadCount.toLocaleString()} 颗</span></div>
         <button className="secondary" disabled={!recommendation} onClick={resetRecommendation}><Icon name="↺" /> 恢复 AI 推荐</button>
-        <button className="download" onClick={download}><Icon name="↓" /> 下载拼豆图 PNG</button>
+        <button className="download" onClick={download}><span><Icon name="↓" /> 下载高清图纸</span><small>每格固定显示色号 · PNG</small></button>
       </aside>
     </section>}
 

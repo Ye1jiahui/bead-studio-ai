@@ -10,7 +10,10 @@ export type PixelPipelineInput = {
   colorCount: number
   contrast: number
   saturation: number
+  isolateSubject?: boolean
 }
+
+export type ProcessedPixel = PixelRGB | null
 
 function clamp(value: number) {
   return Math.max(0, Math.min(255, Math.round(value)))
@@ -49,6 +52,54 @@ export function areaSample(image: ImageData, gridWidth: number, gridHeight: numb
     }
   }
   return pixels
+}
+
+function colorDistance(a: PixelRGB, b: PixelRGB) {
+  return Math.sqrt(perceptualDistance(a, b))
+}
+
+/**
+ * 根据画面边缘建立背景色模型，再从四周向内扩张背景区域。
+ * 这是完全在浏览器运行的主体分离：不上传原图，也不依赖额外云服务。
+ */
+export function buildSubjectMask(pixels: PixelRGB[], width: number, height: number): boolean[] {
+  if (!pixels.length || width < 2 || height < 2) return pixels.map(() => true)
+  const edge: PixelRGB[] = []
+  for (let x = 0; x < width; x += 1) { edge.push(pixels[x], pixels[(height - 1) * width + x]) }
+  for (let y = 1; y < height - 1; y += 1) { edge.push(pixels[y * width], pixels[y * width + width - 1]) }
+  const background = edge.reduce<PixelRGB>((sum, color) => [sum[0] + color[0], sum[1] + color[1], sum[2] + color[2]], [0, 0, 0])
+    .map((value) => value / edge.length) as PixelRGB
+  const spread = edge.reduce((sum, color) => sum + colorDistance(color, background), 0) / edge.length
+  const threshold = Math.max(34, Math.min(82, spread * 1.75 + 22))
+  const backgroundMask = pixels.map(() => false)
+  const queue: number[] = []
+  const enqueue = (index: number) => {
+    if (!backgroundMask[index] && colorDistance(pixels[index], background) <= threshold) { backgroundMask[index] = true; queue.push(index) }
+  }
+  for (let x = 0; x < width; x += 1) { enqueue(x); enqueue((height - 1) * width + x) }
+  for (let y = 1; y < height - 1; y += 1) { enqueue(y * width); enqueue(y * width + width - 1) }
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const index = queue[cursor]
+    const x = index % width
+    const y = Math.floor(index / width)
+    if (x > 0) enqueue(index - 1)
+    if (x + 1 < width) enqueue(index + 1)
+    if (y > 0) enqueue(index - width)
+    if (y + 1 < height) enqueue(index + width)
+  }
+  // 去除主体边缘的一格杂色，使最终轮廓更适合实际摆豆。
+  const subject = backgroundMask.map((value) => !value)
+  return subject.map((value, index) => {
+    if (!value) return false
+    const x = index % width
+    const y = Math.floor(index / width)
+    let neighbours = 0
+    if (x > 0 && subject[index - 1]) neighbours += 1
+    if (x + 1 < width && subject[index + 1]) neighbours += 1
+    if (y > 0 && subject[index - width]) neighbours += 1
+    if (y + 1 < height && subject[index + width]) neighbours += 1
+    return neighbours >= 2
+  })
 }
 
 function perceptualDistance(a: PixelRGB, b: PixelRGB) {
@@ -95,13 +146,17 @@ export function buildPalette(pixels: PixelRGB[], count: number): PixelRGB[] {
 export function processPixels(input: PixelPipelineInput) {
   const sampled = areaSample(input.image, input.gridWidth, input.gridHeight)
     .map((color) => adjustColor(color, input.contrast, input.saturation))
-  const customPalette = buildPalette(sampled, input.colorCount)
+  const subjectMask = input.isolateSubject ? buildSubjectMask(sampled, input.gridWidth, input.gridHeight) : sampled.map(() => true)
+  // 主体模式下只让有效格参与聚类，避免被大量背景颜色挤占调色板名额。
+  const activePixels = sampled.filter((_, index) => subjectMask[index])
+  const customPalette = buildPalette(activePixels.length ? activePixels : sampled, input.colorCount)
   // 先提炼照片主色，再映射到最接近的 MARD 标准色，避免全色卡直接匹配产生太多零散色号。
   const mappedColors = customPalette.map((color) => MARD_PALETTE.reduce((best, candidate) =>
     perceptualDistance(color, candidate.rgb) < perceptualDistance(color, best.rgb) ? candidate : best))
   const selected = [...new Map(mappedColors.map((color) => [color.code, color])).values()]
   const counts = new Map<string, number>()
-  const pixels = sampled.map((color) => {
+  const pixels: ProcessedPixel[] = sampled.map((color, index) => {
+    if (!subjectMask[index]) return null
     const bead = selected.reduce((best, candidate) =>
       perceptualDistance(color, candidate.rgb) < perceptualDistance(color, best.rgb) ? candidate : best)
     counts.set(bead.code, (counts.get(bead.code) || 0) + 1)
@@ -109,5 +164,5 @@ export function processPixels(input: PixelPipelineInput) {
   })
   const swatches: BeadSwatch[] = selected.map((color) => ({ ...color, count: counts.get(color.code) || 0 }))
     .filter((color) => color.count > 0).sort((a, b) => b.count - a.count)
-  return { pixels, palette: selected.map((color) => color.rgb), swatches }
+  return { pixels, palette: selected.map((color) => color.rgb), swatches, beadCount: pixels.filter(Boolean).length }
 }
