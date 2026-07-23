@@ -6,8 +6,9 @@ body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradie
 button, input { font: inherit; } button { cursor: pointer; }
 .ui-icon { display: inline-grid; place-items: center; min-width: 18px; font: 600 18px/1 'DM Mono', monospace; }
 .topbar { height: 78px; padding: 0 max(5vw, 28px); display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #dedccf; background: rgba(247,244,235,.88); backdrop-filter: blur(12px); }
-.brand { display: grid; grid-template-columns: 38px auto; grid-template-rows: 22px 13px; column-gap: 10px; color: var(--ink); text-decoration: none; font-size: 20px; font-weight: 800; letter-spacing: .16em; }
-.brand small { font: 500 9px 'DM Mono'; letter-spacing: .12em; color: #7b806f; }
+.brand { display: grid; grid-template-columns: 38px auto; grid-template-rows: auto auto; column-gap: 10px; row-gap: 3px; align-items: center; color: var(--ink); text-decoration: none; }
+.brand > span:not(.brand-mark) { align-self: end; font-size: 20px; font-weight: 800; line-height: 1; letter-spacing: .16em; }
+.brand small { align-self: start; font: 500 9px/1 'DM Mono'; letter-spacing: .12em; color: #7b806f; white-space: nowrap; }
 .brand-mark { grid-row: 1 / 3; width: 38px; height: 38px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; transform: rotate(-4deg); } .brand-mark i { border-radius: 4px; background: var(--green); box-shadow: inset 0 0 0 2px rgba(255,255,255,.25); } .brand-mark i:nth-child(2), .brand-mark i:nth-child(3) { background: var(--lime); }
 .privacy-pill { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid #d6dbc3; border-radius: 999px; color: #64715f; font-size: 12px; background: #fbfaef; } .privacy-pill span { width: 7px; height: 7px; background: #72a36d; border-radius: 50%; box-shadow: 0 0 0 3px #e1edd5; }
 .intro { max-width: 940px; padding: 64px 24px 40px; margin: auto; text-align: center; }
